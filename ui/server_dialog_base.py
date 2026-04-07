@@ -1,510 +1,377 @@
 """
-Базовые классы и вспомогательные диалоги для серверного режима
+Базовые классы для серверного диалога
 """
 
-import os
-import sys
-from datetime import datetime
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                                QPushButton, QFrame, QGraphicsDropShadowEffect,
-                               QLineEdit, QTextEdit, QScrollArea, QWidget,
+                               QLineEdit, QListWidgetItem, QScrollArea, QWidget,
                                QMessageBox)
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal, Slot
-from PySide6.QtGui import QFont, QColor, QPixmap, QPainter, QPen
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal, QTimer
+from PySide6.QtGui import QFont, QColor, QPixmap
 
 from config import THEMES
+import os
 
 
 class AnimatedButton(QPushButton):
-    """Кнопка с анимацией пульсации"""
+    """Кнопка с анимацией при наведении"""
     
-    def __init__(self, text, parent=None, color="#10b981"):
+    def __init__(self, text, parent=None, color="#3b82f6"):
         super().__init__(text, parent)
         self.color = color
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumHeight(50)
-        self.setFont(QFont("Segoe UI", 12))
-        
-        self.animation = QPropertyAnimation(self, b"geometry")
-        self.animation.setDuration(300)
-        self.animation.setEasingCurve(QEasingCurve.OutBounce)
+        self.setMinimumHeight(40)
         
     def enterEvent(self, event):
-        self.animation.stop()
+        self.animation = QPropertyAnimation(self, b"geometry")
+        self.animation.setDuration(200)
         self.animation.setStartValue(self.geometry())
         self.animation.setEndValue(self.geometry().adjusted(-2, -2, 2, 2))
+        self.animation.setEasingCurve(QEasingCurve.OutQuad)
         self.animation.start()
         super().enterEvent(event)
     
     def leaveEvent(self, event):
-        self.animation.stop()
+        self.animation = QPropertyAnimation(self, b"geometry")
+        self.animation.setDuration(200)
         self.animation.setStartValue(self.geometry())
         self.animation.setEndValue(self.geometry().adjusted(2, 2, -2, -2))
+        self.animation.setEasingCurve(QEasingCurve.OutQuad)
         self.animation.start()
         super().leaveEvent(event)
 
 
 class PlayerCard(QFrame):
-    """Карточка подключенного игрока"""
+    """Карточка игрока в списке"""
+    
+    # ДОБАВЛЕНО: сигнал для фото
+    photo_taken = Signal(str, str, int)  # (player_id, player_name, version)
     
     def __init__(self, player_name, player_id, connected_at, parent=None):
         super().__init__(parent)
         self.player_name = player_name
         self.player_id = player_id
         self.connected_at = connected_at
+        self.photo_version = 0
+        self.has_photo = False
         
         self.setObjectName("playerCard")
+        self.setFixedHeight(70)
         self.setStyleSheet("""
             QFrame#playerCard {
                 background-color: rgba(30, 41, 59, 0.7);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 10px;
-                padding: 10px;
-                margin: 5px;
-            }
-            QFrame#playerCard:hover {
-                background-color: rgba(30, 41, 59, 0.9);
                 border: 1px solid #3b82f6;
+                border-radius: 10px;
+                margin: 2px;
             }
         """)
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 10, 15, 10)
+        layout.setContentsMargins(10, 5, 10, 5)
         
-        # Аватар с цветом
-        avatar = QLabel()
+        # Аватар
+        avatar = QLabel("👤")
+        avatar.setFont(QFont("Segoe UI", 20))
         avatar.setFixedSize(40, 40)
+        avatar.setAlignment(Qt.AlignCenter)
+        avatar.setStyleSheet("background-color: #3b82f6; border-radius: 20px; color: white;")
+        layout.addWidget(avatar)
         
-        # Генерируем цвет на основе имени
-        colors = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b", "#ec4899", "#ef4444"]
-        color_index = hash(player_name) % len(colors)
-        
-        pixmap = QPixmap(40, 40)
-        pixmap.fill(QColor(colors[color_index]))
-        
-        painter = QPainter(pixmap)
-        painter.setPen(QPen(Qt.white, 2))
-        painter.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        painter.drawText(pixmap.rect(), Qt.AlignCenter, player_name[0].upper())
-        painter.end()
-        
-        avatar.setPixmap(pixmap)
-        avatar.setStyleSheet("border-radius: 20px;")
-        
-        # Информация об игроке
+        # Информация
         info_layout = QVBoxLayout()
         info_layout.setSpacing(2)
         
         name_label = QLabel(player_name)
-        name_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        name_label.setFont(QFont("Segoe UI", 11, QFont.Bold))
         name_label.setStyleSheet("color: #f8fafc; background: transparent;")
         
-        time_label = QLabel(f"Подключен: {connected_at.strftime('%H:%M:%S')}")
+        time_label = QLabel(connected_at.strftime("%H:%M:%S"))
         time_label.setFont(QFont("Segoe UI", 9))
         time_label.setStyleSheet("color: #94a3b8; background: transparent;")
         
         info_layout.addWidget(name_label)
         info_layout.addWidget(time_label)
         
-        # Статус (онлайн)
-        status_label = QLabel("● ONLINE")
-        status_label.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        status_label.setStyleSheet("color: #10b981; background: transparent;")
-        
-        layout.addWidget(avatar)
         layout.addLayout(info_layout, 1)
-        layout.addWidget(status_label)
-
-
-class BaseDialog(QDialog):
-    """Базовый класс для всех диалогов с общей стилизацией"""
-    
-    def __init__(self, parent=None, title="", current_theme="dark", width=500, height=400):
-        super().__init__(parent)
-        self.current_theme = current_theme
-        self.theme = THEMES.get(current_theme, THEMES["dark"])
-        
-        self.setWindowTitle(title)
-        self.setModal(True)
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setFixedSize(width, height)
         
         # Тень
         shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(40)
-        shadow.setColor(QColor(0, 0, 0, 100))
-        shadow.setOffset(0, 10)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(59, 130, 246, 50))
+        shadow.setOffset(0, 2)
         self.setGraphicsEffect(shadow)
+    
+    def take_photo(self):
+        """Открыть диалог фотосъёмки"""
+        from ui.camera_dialog import CameraDialog
+        from ml.face_trainer import FaceTrainer
         
+        dialog = CameraDialog(self.player_name, self.window())
+        if dialog.exec() == QDialog.Accepted and hasattr(dialog, 'photos_taken') and len(dialog.photos_taken) == 10:
+            # Обучаем модель
+            trainer = FaceTrainer()
+            new_version = trainer.train_new_face(self.player_name, dialog.photos_taken)
+            
+            if new_version > 0:
+                # Обновляем отображение
+                self.photo_version = new_version
+                self.has_photo = True
+                self.version_label.setText(str(new_version))
+                
+                # Меняем иконку на птичку (НЕ фон кнопки)
+                self.camera_btn.setText("✅")
+                
+                # Отключаем кнопку
+                self.camera_btn.setEnabled(False)
+                
+                # ДОБАВЛЕНО: испускаем сигнал
+                self.photo_taken.emit(self.player_id, self.player_name, new_version)
+    
+    def set_photo_version(self, version):
+        """Установить версию фото"""
+        self.photo_version = version
+        self.has_photo = version > 0
+        self.version_label.setText(str(version))
+        
+        if version > 0:
+            self.camera_btn.setText("✅")
+            self.camera_btn.setEnabled(False)
+        else:
+            self.camera_btn.setText("📷")
+            self.camera_btn.setEnabled(True)
+
+
+class ParticipantsListDialog(QDialog):
+    """Диалог для ввода имён участников"""
+    
+    def __init__(self, parent=None, current_theme="dark"):
+        super().__init__(parent)
+        self.current_theme = current_theme
+        self.theme = THEMES.get(current_theme, THEMES["dark"])
+        self.participants = []
+        self.photo_versions = {}  # {имя: версия}
+        
+        self.setWindowTitle("👥 Участники игры")
+        self.setModal(True)
+        self.setFixedSize(600, 500)
+        
+        self.setup_ui()
+        self.apply_theme()
+    
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        # Заголовок
+        title = QLabel("👥 Введите имена участников")
+        title.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+        
+        # Контейнер для полей ввода
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        
+        self.fields_container = QWidget()
+        self.fields_layout = QVBoxLayout(self.fields_container)
+        self.fields_layout.setSpacing(10)
+        self.fields_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Добавляем первое поле
+        self.add_participant_field()
+        
+        scroll.setWidget(self.fields_container)
+        layout.addWidget(scroll, 1)
+        
+        # Кнопка добавления
+        add_btn = QPushButton("➕ Добавить участника")
+        add_btn.setFont(QFont("Segoe UI", 12))
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setMinimumHeight(40)
+        add_btn.clicked.connect(self.add_participant_field)
+        layout.addWidget(add_btn)
+        
+        # Кнопки действий
+        button_layout = QHBoxLayout()
+        
+        cancel_btn = QPushButton("❌ Отмена")
+        cancel_btn.setFont(QFont("Segoe UI", 12))
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setMinimumHeight(40)
+        cancel_btn.clicked.connect(self.reject)
+        
+        self.start_btn = QPushButton("✅ Начать игру")
+        self.start_btn.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.start_btn.setCursor(Qt.PointingHandCursor)
+        self.start_btn.setMinimumHeight(40)
+        self.start_btn.setEnabled(False)
+        self.start_btn.clicked.connect(self.accept)
+        
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(self.start_btn)
+        
+        layout.addLayout(button_layout)
+    
+    def add_participant_field(self):
+        """Добавить поле для ввода имени участника"""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        
+        # Поле ввода имени
+        line_edit = QLineEdit()
+        line_edit.setPlaceholderText(f"Участник {self.fields_layout.count() + 1}")
+        line_edit.setFont(QFont("Segoe UI", 11))
+        line_edit.setMinimumHeight(35)
+        line_edit.textChanged.connect(self.check_fields)
+        layout.addWidget(line_edit, 1)
+        
+        # ============= ДОБАВЛЕНО: метка версии фото =============
+        version_label = QLabel("0")
+        version_label.setFixedSize(35, 35)
+        version_label.setAlignment(Qt.AlignCenter)
+        version_label.setStyleSheet("""
+            QLabel {
+                background-color: #1e293b;
+                color: #10b981;
+                border: 2px solid #10b981;
+                border-radius: 5px;
+                font-size: 10pt;
+                font-weight: bold;
+            }
+        """)
+        layout.addWidget(version_label)
+        
+        # ============= ДОБАВЛЕНО: кнопка камеры =============
+        camera_btn = QPushButton("📷")
+        camera_btn.setFixedSize(35, 35)
+        camera_btn.setFont(QFont("Segoe UI", 12))
+        camera_btn.setCursor(Qt.PointingHandCursor)
+        camera_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+            QPushButton:disabled {
+                background-color: #64748b;
+            }
+        """)
+        # Привязываем обработчик с передачей line_edit, version_label и camera_btn
+        camera_btn.clicked.connect(lambda: self.take_photos(line_edit, version_label, camera_btn))
+        layout.addWidget(camera_btn)
+        
+        # Кнопка удаления (только если не первое поле)
+        if self.fields_layout.count() > 0:
+            remove_btn = QPushButton("❌")
+            remove_btn.setFixedSize(35, 35)
+            remove_btn.setCursor(Qt.PointingHandCursor)
+            remove_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #ef4444;
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #dc2626;
+                }
+            """)
+            remove_btn.clicked.connect(lambda: self.remove_field(widget))
+            layout.addWidget(remove_btn)
+        
+        self.fields_layout.addWidget(widget)
+    
+    # ============= ДОБАВЛЕНО: новый метод для фотосъёмки =============
+    def take_photos(self, line_edit, version_label, camera_btn):
+        """Открыть диалог фотосъёмки для участника"""
+        name = line_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Предупреждение", "Сначала введите имя!")
+            return
+    
+        from ui.camera_dialog import CameraDialog
+        from ml.face_trainer import FaceTrainer
+    
+        dialog = CameraDialog(name, self)
+        if dialog.exec() == QDialog.Accepted and hasattr(dialog, 'photos_taken') and len(dialog.photos_taken) == 10:
+            # Обучаем модель (пока без статистики, передаём пустой словарь)
+            trainer = FaceTrainer()
+            # ИСПРАВЛЕНО: добавляем пустой словарь для stats
+            new_version = trainer.train_new_face(name, dialog.photos_taken, {})
+        
+            if new_version > 0:
+                # Обновляем отображение
+                version_label.setText(str(new_version))
+                self.photo_versions[name] = new_version
+            
+                # Меняем иконку на птичку
+                camera_btn.setText("✅")
+                camera_btn.setEnabled(False)
+            
+                QMessageBox.information(self, "Успех", f"Фото для {name} сохранены! Версия: {new_version}")
+    
+    def remove_field(self, widget):
+        """Удалить поле"""
+        widget.deleteLater()
+        self.check_fields()
+    
+    def check_fields(self):
+        """Проверить заполненность полей"""
+        all_filled = True
+        for i in range(self.fields_layout.count()):
+            item = self.fields_layout.itemAt(i)
+            if item and item.widget():
+                line_edit = item.widget().findChild(QLineEdit)
+                if not line_edit or not line_edit.text().strip():
+                    all_filled = False
+                    break
+        
+        self.start_btn.setEnabled(self.fields_layout.count() > 0 and all_filled)
+    
+    def get_participants(self):
+        """Получить список участников"""
+        participants = []
+        for i in range(self.fields_layout.count()):
+            item = self.fields_layout.itemAt(i)
+            if item and item.widget():
+                line_edit = item.widget().findChild(QLineEdit)
+                if line_edit:
+                    name = line_edit.text().strip()
+                    if name:
+                        participants.append(name)
+        return participants
+    
+    def get_photo_versions(self):
+        """Получить словарь версий фото"""
+        return self.photo_versions.copy()
+    
+    def apply_theme(self):
+        """Применить тему"""
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {self.theme["bg_secondary"]};
                 border: 1px solid {self.theme["border"]};
                 border-radius: 20px;
             }}
-        """)
-        
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setSpacing(0)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.create_top_bar(title)
-    
-    def create_top_bar(self, title):
-        """Создать верхнюю панель с заголовком и кнопкой закрытия"""
-        top_bar = QFrame()
-        top_bar.setFixedHeight(60)
-        top_bar.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.theme["bg_overlay"]};
-                border-top-left-radius: 20px;
-                border-top-right-radius: 20px;
-                border-bottom: 1px solid {self.theme["border"]};
+            QLabel {{
+                color: {self.theme["text"]};
             }}
-        """)
-        
-        layout = QHBoxLayout(top_bar)
-        layout.setContentsMargins(20, 0, 20, 0)
-        
-        title_label = QLabel(title)
-        title_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        title_label.setStyleSheet(f"color: {self.theme['text']};")
-        
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(40, 40)
-        close_btn.setFont(QFont("Segoe UI", 16))
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(239, 68, 68, 0.2);
-                color: #ef4444;
-                border: none;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: rgba(239, 68, 68, 0.3);
-            }
-        """)
-        close_btn.clicked.connect(self.reject)
-        
-        layout.addWidget(title_label)
-        layout.addStretch()
-        layout.addWidget(close_btn)
-        
-        self.main_layout.addWidget(top_bar)
-    
-    def add_content(self, content_widget):
-        """Добавить контент в диалог"""
-        content_widget.setStyleSheet(f"""
-            QWidget {{
-                background-color: {self.theme["bg_secondary"]};
-                border-bottom-left-radius: 20px;
-                border-bottom-right-radius: 20px;
-            }}
-        """)
-        self.main_layout.addWidget(content_widget, 1)
-
-
-class AddParticipantDialog(BaseDialog):
-    """Диалог добавления участника"""
-    
-    def __init__(self, parent=None, current_theme="dark"):
-        super().__init__(parent, "➕ ДОБАВЛЕНИЕ УЧАСТНИКА", current_theme, 500, 400)
-        self.participant_name = ""
-        self.setup_ui()
-    
-    def setup_ui(self):
-        """Настройка интерфейса"""
-        content_widget = QWidget()
-        layout = QVBoxLayout(content_widget)
-        layout.setSpacing(20)
-        layout.setContentsMargins(40, 30, 40, 30)
-        
-        # Форма
-        form_frame = QFrame()
-        form_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.theme["bg_card"]};
-                border: 1px solid {self.theme["border"]};
-                border-radius: 15px;
-                padding: 20px;
-            }}
-        """)
-        form_layout = QVBoxLayout(form_frame)
-        form_layout.setSpacing(15)
-        
-        # Поле для имени
-        name_label = QLabel("Имя и фамилия участника:")
-        name_label.setFont(QFont("Segoe UI", 11))
-        name_label.setStyleSheet(f"color: {self.theme['text']};")
-        form_layout.addWidget(name_label)
-        
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Введите имя и фамилию...")
-        self.name_input.setFont(QFont("Segoe UI", 11))
-        self.name_input.setMinimumHeight(40)
-        # Сероватый фон для светлой темы
-        if self.current_theme == "light":
-            self.name_input.setStyleSheet(f"""
-                QLineEdit {{
-                    background-color: #f1f5f9;
-                    color: #0f172a;
-                    border: 1px solid #cbd5e1;
-                    border-radius: 8px;
-                    padding: 8px 12px;
-                }}
-                QLineEdit:focus {{
-                    border: 2px solid #3b82f6;
-                }}
-            """)
-        else:
-            self.name_input.setStyleSheet(f"""
-                QLineEdit {{
-                    background-color: {self.theme["bg_secondary"]};
-                    color: {self.theme["text"]};
-                    border: 1px solid {self.theme["border"]};
-                    border-radius: 8px;
-                    padding: 8px 12px;
-                }}
-                QLineEdit:focus {{
-                    border: 2px solid #3b82f6;
-                }}
-            """)
-        form_layout.addWidget(self.name_input)
-        
-        layout.addWidget(form_frame)
-        layout.addStretch()
-        
-        # Кнопки
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(15)
-        
-        cancel_btn = QPushButton("❌ Отмена")
-        cancel_btn.setFont(QFont("Segoe UI", 11))
-        cancel_btn.setCursor(Qt.PointingHandCursor)
-        cancel_btn.setMinimumHeight(45)
-        cancel_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {self.theme["text_secondary"]};
-                border: 1px solid {self.theme["border"]};
-                border-radius: 8px;
-                padding: 8px 20px;
-            }}
-            QPushButton:hover {{
-                background-color: rgba(239, 68, 68, 0.1);
-                border: 1px solid #ef4444;
-                color: #ef4444;
-            }}
-        """)
-        cancel_btn.clicked.connect(self.reject)
-        
-        add_btn = QPushButton("✅ Добавить")
-        add_btn.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        add_btn.setCursor(Qt.PointingHandCursor)
-        add_btn.setMinimumHeight(45)
-        add_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #10b981;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 8px 20px;
-            }
-            QPushButton:hover {
-                background-color: #059669;
-            }
-        """)
-        add_btn.clicked.connect(self.accept)
-        
-        button_layout.addStretch()
-        button_layout.addWidget(cancel_btn)
-        button_layout.addWidget(add_btn)
-        
-        layout.addLayout(button_layout)
-        
-        self.add_content(content_widget)
-    
-    def accept(self):
-        """Принять добавление"""
-        name = self.name_input.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Предупреждение", "Введите имя и фамилию участника!")
-            return
-        self.participant_name = name
-        super().accept()
-
-
-class ParticipantsListDialog(BaseDialog):
-    """Диалог списка участников"""
-    
-    def __init__(self, parent=None, current_theme="dark"):
-        super().__init__(parent, "👥 УЧАСТНИКИ ИГРЫ", current_theme, 1000, 800)
-        self.participants = []
-        self.setup_ui()
-    
-    def setup_ui(self):
-        """Настройка интерфейса"""
-        content_widget = QWidget()
-        layout = QVBoxLayout(content_widget)
-        layout.setSpacing(20)
-        layout.setContentsMargins(40, 30, 40, 30)
-        
-        # Информация
-        info_label = QLabel("Добавьте участников игры (минимум 1)")
-        info_label.setFont(QFont("Segoe UI", 11))
-        info_label.setStyleSheet(f"color: {self.theme['text_secondary']};")
-        info_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(info_label)
-        
-        # Кнопка добавления
-        self.add_btn = QPushButton("➕ Добавить участника")
-        self.add_btn.setFont(QFont("Segoe UI", 11))
-        self.add_btn.setCursor(Qt.PointingHandCursor)
-        self.add_btn.setMinimumHeight(50)
-        self.add_btn.setStyleSheet(f"""
-            QPushButton {{
+            QLineEdit {{
                 background-color: {self.theme["bg_card"]};
                 color: {self.theme["text"]};
-                border: 2px dashed #3b82f6;
-                border-radius: 10px;
-                padding: 10px;
+                border: 1px solid {self.theme["border"]};
+                border-radius: 5px;
+                padding: 5px 10px;
             }}
-            QPushButton:hover {{
-                background-color: rgba(59, 130, 246, 0.1);
+            QLineEdit:focus {{
                 border: 2px solid #3b82f6;
             }}
         """)
-        self.add_btn.clicked.connect(self.add_participant)
-        layout.addWidget(self.add_btn)
-        
-        # Список участников
-        list_frame = QFrame()
-        list_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.theme["bg_card"]};
-                border: 1px solid {self.theme["border"]};
-                border-radius: 15px;
-                padding: 15px;
-            }}
-        """)
-        list_layout = QVBoxLayout(list_frame)
-        
-        list_title = QLabel("📋 СПИСОК УЧАСТНИКОВ")
-        list_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        list_title.setStyleSheet(f"color: {self.theme['text']};")
-        list_layout.addWidget(list_title)
-        
-        # Scroll area для списка
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background-color: transparent;
-            }
-            QScrollBar:vertical {
-                background-color: #1e293b;
-                width: 10px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #475569;
-                border-radius: 5px;
-            }
-        """)
-        
-        self.list_widget = QWidget()
-        self.list_layout = QVBoxLayout(self.list_widget)
-        self.list_layout.setSpacing(5)
-        self.list_layout.setContentsMargins(0, 0, 0, 0)
-        self.list_layout.addStretch()
-        
-        scroll_area.setWidget(self.list_widget)
-        list_layout.addWidget(scroll_area)
-        
-        layout.addWidget(list_frame, 1)
-        
-        # Счетчик
-        self.count_label = QLabel("Добавлено участников: 0")
-        self.count_label.setFont(QFont("Segoe UI", 10))
-        self.count_label.setStyleSheet(f"color: {self.theme['text_muted']};")
-        self.count_label.setAlignment(Qt.AlignRight)
-        layout.addWidget(self.count_label)
-        
-        # Кнопка продолжить
-        self.continue_btn = QPushButton("▶ Продолжить")
-        self.continue_btn.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        self.continue_btn.setCursor(Qt.PointingHandCursor)
-        self.continue_btn.setMinimumHeight(50)
-        self.continue_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3b82f6;
-                color: white;
-                border: none;
-                border-radius: 10px;
-                padding: 10px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-            }
-            QPushButton:disabled {
-                background-color: #94a3b8;
-                color: #f1f5f9;
-            }
-        """)
-        self.continue_btn.setEnabled(False)
-        self.continue_btn.clicked.connect(self.accept)
-        layout.addWidget(self.continue_btn)
-        
-        self.add_content(content_widget)
-    
-    def add_participant(self):
-        """Добавить нового участника"""
-        dialog = AddParticipantDialog(self, self.current_theme)
-        if dialog.exec() == QDialog.Accepted:
-            name = dialog.participant_name
-            self.participants.append(name)
-            self.update_list()
-    
-    def update_list(self):
-        """Обновить список участников"""
-        # Очищаем список
-        while self.list_layout.count() > 1:
-            item = self.list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        
-        # Добавляем участников
-        for i, name in enumerate(self.participants):
-            item_widget = QFrame()
-            item_widget.setStyleSheet("""
-                QFrame {
-                    background-color: rgba(59, 130, 246, 0.1);
-                    border: 1px solid #3b82f6;
-                    border-radius: 8px;
-                    padding: 8px;
-                }
-            """)
-            item_layout = QHBoxLayout(item_widget)
-            item_layout.setContentsMargins(10, 5, 10, 5)
-            
-            number_label = QLabel(f"{i+1}.")
-            number_label.setStyleSheet("color: #3b82f6; font-weight: bold; background: transparent;")
-            item_layout.addWidget(number_label)
-            
-            # ИЗМЕНЕНО: цвет текста зависит от темы
-            text_color = "#0f172a" if self.current_theme == "light" else "#f8fafc"
-            name_label = QLabel(name)
-            name_label.setStyleSheet(f"color: {text_color}; background: transparent;")
-            name_label.setFont(QFont("Segoe UI", 11))
-            item_layout.addWidget(name_label)
-            item_layout.addStretch()
-            
-            self.list_layout.insertWidget(self.list_layout.count() - 1, item_widget)
-        
-        # Обновляем счетчик
-        self.count_label.setText(f"Добавлено участников: {len(self.participants)}")
-        
-        # Активируем кнопку если есть хотя бы 1 участник
-        self.continue_btn.setEnabled(len(self.participants) >= 1)

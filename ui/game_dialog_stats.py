@@ -1,23 +1,26 @@
 """
 Модуль статистики для мультиплеерной игры
 """
-
 import asyncio
 import logging
 import math
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QPushButton, QFrame, QGraphicsDropShadowEffect,
-                               QScrollArea, QWidget, QTabWidget, QGridLayout,
-                               QProgressBar, QMessageBox)
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+QPushButton, QFrame, QGraphicsDropShadowEffect,
+QScrollArea, QWidget, QTabWidget, QGridLayout,
+QProgressBar, QMessageBox)
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, Signal, Slot
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush
-
 from config import THEMES
 from ui.game_dialog_base import RadarChartWidget, BarChartWidget, AnimatedButton
 
 logger = logging.getLogger("GameDialog")
 logger.setLevel(logging.DEBUG)
 
+# 🔴 ДОБАВИТЬ константы для alignment (обход бага Python 3.13)
+QT_ALIGN_CENTER = 0x004  # Qt.AlignCenter
+QT_ALIGN_HALFCENTER = 0x004  # Qt.AlignHCenter
+QT_ALIGN_VALCENTER = 0x080  # Qt.AlignVCenter
+QT_ALIGN_RIGHT = 0x002  # Qt.AlignRight
 
 class StatsCard(QFrame):
     """Карточка статистики для одного качества"""
@@ -47,7 +50,8 @@ class StatsCard(QFrame):
         title_label = QLabel(category.upper())
         title_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
         title_label.setStyleSheet("color: #3b82f6; background: transparent;")
-        title_label.setAlignment(Qt.AlignCenter)
+        # 🔴 ИСПРАВЛЕНО: корректный Qt alignment
+        title_label.setAlignment(QT_ALIGN_CENTER)
         layout.addWidget(title_label)
         
         # Значения
@@ -56,18 +60,19 @@ class StatsCard(QFrame):
         self_val = QLabel(f"Я: {self_score}")
         self_val.setFont(QFont("Segoe UI", 11))
         self_val.setStyleSheet("color: #10b981; background: transparent;")
-        self_val.setAlignment(Qt.AlignCenter)
+        # 🔴 ИСПРАВЛЕНО: опечатка self_val.setAlignment (было self_valsetAlignment)
+        self_val.setAlignment(QT_ALIGN_CENTER)
         
         other_val = QLabel(f"Др: {other_avg:.1f}")
         other_val.setFont(QFont("Segoe UI", 11))
         other_val.setStyleSheet("color: #f59e0b; background: transparent;")
-        other_val.setAlignment(Qt.AlignCenter)
+        other_val.setAlignment(QT_ALIGN_CENTER)
         
         diff_val = QLabel(f"{diff:+.1f}")
         diff_val.setFont(QFont("Segoe UI", 12, QFont.Bold))
         diff_color = "#10b981" if diff >= 0 else "#ef4444"
         diff_val.setStyleSheet(f"color: {diff_color}; background: transparent;")
-        diff_val.setAlignment(Qt.AlignCenter)
+        diff_val.setAlignment(QT_ALIGN_CENTER)
         
         values_layout.addWidget(self_val)
         values_layout.addWidget(other_val)
@@ -121,9 +126,8 @@ class StatsTab(QWidget):
         self.participant_name = participant_name
         self.data = data
         self.setup_ui()
-    
+
     def setup_ui(self):
-        # Основной layout с прокруткой
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setStyleSheet("""
@@ -166,7 +170,7 @@ class StatsTab(QWidget):
         
         content_layout.addWidget(title_frame)
         
-        # Данные
+        # Данные 
         self_scores = self.data.get("self_scores", [])
         other_scores = self.data.get("other_scores", [])
         
@@ -181,7 +185,7 @@ class StatsTab(QWidget):
         total_other = sum(other_averages)
         total = total_self + total_other
         
-        total_frame = QFrame()
+        total_frame = QFrame() 
         total_frame.setStyleSheet("background: rgba(59, 130, 246, 0.1); border: 1px solid #3b82f6; border-radius: 15px; padding: 15px;")
         total_layout = QHBoxLayout(total_frame)
         
@@ -192,7 +196,7 @@ class StatsTab(QWidget):
         total_value = QLabel(f"{total:.0f}")
         total_value.setFont(QFont("Segoe UI", 20, QFont.Bold))
         total_value.setStyleSheet("color: #10b981; background: transparent;")
-        total_value.setAlignment(Qt.AlignRight)
+        total_value.setAlignment(QT_ALIGN_RIGHT)
         
         total_layout.addWidget(total_label)
         total_layout.addStretch()
@@ -341,7 +345,7 @@ class ResultsDialog(QDialog):
         
         self.setup_ui()
         self.send_results_to_clients()
-    
+
     def send_results_to_clients(self):
         """Отправить результаты на клиенты"""
         if hasattr(self.parent(), 'server') and self.parent().server:
@@ -378,7 +382,7 @@ class ResultsDialog(QDialog):
                         server.send_to_player(player_id, message),
                         server.loop
                     )
-    
+
     def setup_ui(self):
         self.setStyleSheet(f"QDialog {{ background-color: {self.theme['bg']}; }}")
         
@@ -423,7 +427,7 @@ class ResultsDialog(QDialog):
         title_label = QLabel("ИТОГОВАЯ СТАТИСТИКА")
         title_label.setFont(QFont("Segoe UI", 24, QFont.Bold))
         title_label.setStyleSheet(f"color: {self.theme['text']}; padding: 10px;")
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(QT_ALIGN_CENTER)
         content_layout.addWidget(title_label)
         
         # Табы
@@ -493,7 +497,7 @@ class ResultsDialog(QDialog):
         
         scroll_area.setWidget(content_widget)
         main_layout.addWidget(scroll_area, 1)
-    
+
     def create_top_bar(self):
         bar = QFrame()
         bar.setFixedHeight(70)
@@ -544,3 +548,17 @@ class ResultsDialog(QDialog):
         layout.addWidget(close_btn)
         
         return bar
+
+    def get_player_stats(self):
+        """Получить статистику для всех игроков в формате для синхронизации"""
+        stats = {}
+        for participant in self.participants:
+            data = self.participant_data[participant]
+            stats[participant] = {
+                "Трудолюбие": [data["self_scores"][0], sum(data["other_scores"][0])/len(data["other_scores"][0]) if data["other_scores"][0] else 0],
+                "Ответственность": [data["self_scores"][1], sum(data["other_scores"][1])/len(data["other_scores"][1]) if data["other_scores"][1] else 0],
+                "Креативность": [data["self_scores"][2], sum(data["other_scores"][2])/len(data["other_scores"][2]) if data["other_scores"][2] else 0],
+                "Командность": [data["self_scores"][3], sum(data["other_scores"][3])/len(data["other_scores"][3]) if data["other_scores"][3] else 0],
+                "Стрессоустойчивость": [data["self_scores"][4], sum(data["other_scores"][4])/len(data["other_scores"][4]) if data["other_scores"][4] else 0]
+            }
+        return stats

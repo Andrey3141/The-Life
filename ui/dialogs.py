@@ -5,9 +5,10 @@
 import os
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                                QPushButton, QFileDialog, QComboBox, QFrame,
-                               QGraphicsDropShadowEffect, QWidget)  # ДОБАВЛЕНО QWidget
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor
+                               QGraphicsDropShadowEffect, QWidget, QLineEdit,
+                               QGridLayout, QMessageBox, QScrollArea)  # ДОБАВЛЕНО QLineEdit, QGridLayout, QMessageBox, QScrollArea
+from PySide6.QtCore import Qt, Signal  # ДОБАВЛЕНО Signal
+from PySide6.QtGui import QFont, QColor, QPixmap  # ДОБАВЛЕНО QPixmap
 
 from config import THEMES
 
@@ -210,5 +211,323 @@ class ThemeSelectorDialog(QDialog):
             return
         super().accept()
 
-# ============= ДОБАВЛЕНО (МИНИМУМ ИЗМЕНЕНИЙ) =============
+
+# ============= НОВЫЙ КЛАСС: Диалог ввода имён участников с кнопками камеры =============
+
+class ParticipantInputDialog(QDialog):
+    """Диалог для ввода имён участников с возможностью фотосъёмки"""
+    
+    # Сигналы для обновления версий фото
+    photo_taken = Signal(str, int)  # (participant_name, version)
+    
+    def __init__(self, parent=None, theme_name="dark"):
+        super().__init__(parent)
+        self.setWindowTitle("👥 Ввод участников")
+        self.setModal(True)
+        self.setFixedSize(600, 500)
+        
+        self.theme_name = theme_name
+        self.theme = THEMES[theme_name]
+        
+        self.participants = []
+        self.participant_widgets = []  # Список (line_edit, camera_btn, version_label)
+        self.photo_versions = {}  # Словарь {имя: версия}
+        
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """Настройка интерфейса"""
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {self.theme["bg_secondary"]};
+                border: 1px solid {self.theme["border"]};
+                border-radius: 20px;
+            }}
+            QLabel {{
+                color: {self.theme["text"]};
+                font-size: 12pt;
+            }}
+            QLineEdit {{
+                background-color: {self.theme["bg_card"]};
+                color: {self.theme["text"]};
+                border: 1px solid {self.theme["border"]};
+                border-radius: 8px;
+                padding: 10px;
+                font-size: 12pt;
+                min-height: 30px;
+            }}
+            QLineEdit:focus {{
+                border: 2px solid #3b82f6;
+            }}
+            QPushButton {{
+                border-radius: 8px;
+                padding: 8px;
+                font-size: 14pt;
+                min-width: 40px;
+                min-height: 40px;
+            }}
+            QPushButton#cameraBtn {{
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+            }}
+            QPushButton#cameraBtn:hover {{
+                background-color: #2563eb;
+            }}
+            QPushButton#cameraBtn:checked {{
+                background-color: #10b981;
+            }}
+            QPushButton#addBtn {{
+                background-color: #10b981;
+                color: white;
+                border: none;
+                font-size: 12pt;
+                min-width: 100px;
+                padding: 10px;
+            }}
+            QPushButton#addBtn:hover {{
+                background-color: #059669;
+            }}
+            QPushButton#startBtn {{
+                background-color: #8b5cf6;
+                color: white;
+                border: none;
+                font-size: 14pt;
+                font-weight: bold;
+                min-width: 200px;
+                min-height: 50px;
+                padding: 10px 20px;
+            }}
+            QPushButton#startBtn:hover {{
+                background-color: #7c3aed;
+            }}
+            QPushButton#startBtn:disabled {{
+                background-color: #64748b;
+            }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        # Заголовок
+        title = QLabel("👥 Введите имена участников")
+        title.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+        
+        # Область прокрутки для списка участников
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(f"""
+            QScrollArea {{
+                border: 1px solid {self.theme["border"]};
+                border-radius: 10px;
+                background-color: {self.theme["bg_card"]};
+            }}
+            QScrollBar:vertical {{
+                background: {self.theme["bg"]};
+                width: 8px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {self.theme["border"]};
+                border-radius: 4px;
+            }}
+        """)
+        
+        scroll_widget = QWidget()
+        self.scroll_layout = QVBoxLayout(scroll_widget)
+        self.scroll_layout.setSpacing(10)
+        self.scroll_layout.setContentsMargins(10, 10, 10, 10)
+        self.scroll_layout.addStretch()
+        
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll, 1)
+        
+        # Кнопка добавления участника
+        add_btn = QPushButton("➕ Добавить участника")
+        add_btn.setObjectName("addBtn")
+        add_btn.clicked.connect(self.add_participant)
+        layout.addWidget(add_btn)
+        
+        # Кнопка начала игры
+        self.start_btn = QPushButton("▶ НАЧАТЬ ИГРУ")
+        self.start_btn.setObjectName("startBtn")
+        self.start_btn.setEnabled(False)
+        self.start_btn.clicked.connect(self.accept)
+        layout.addWidget(self.start_btn)
+        
+        # Добавляем первого участника по умолчанию
+        self.add_participant()
+    
+    def add_participant(self):
+        """Добавить поле для ввода имени нового участника"""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        
+        # Поле ввода имени
+        line_edit = QLineEdit()
+        line_edit.setPlaceholderText(f"Участник {len(self.participant_widgets) + 1}")
+        line_edit.textChanged.connect(self.check_start_button)
+        layout.addWidget(line_edit, 1)
+        
+        # Метка для отображения версии фото
+        version_label = QLabel("0")
+        version_label.setAlignment(Qt.AlignCenter)
+        version_label.setFixedSize(30, 40)
+        version_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {self.theme["bg"]};
+                color: #10b981;
+                border: 2px solid #10b981;
+                border-radius: 8px;
+                font-size: 12pt;
+                font-weight: bold;
+            }}
+        """)
+        layout.addWidget(version_label)
+        
+        # Кнопка камеры
+        camera_btn = QPushButton("📷")
+        camera_btn.setObjectName("cameraBtn")
+        camera_btn.setFixedSize(50, 40)
+        camera_btn.clicked.connect(lambda: self.take_photos(line_edit, version_label))
+        layout.addWidget(camera_btn)
+        
+        # Кнопка удаления (если не первый)
+        if len(self.participant_widgets) > 0:
+            remove_btn = QPushButton("❌")
+            remove_btn.setFixedSize(40, 40)
+            remove_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #ef4444;
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                    font-size: 12pt;
+                }
+                QPushButton:hover {
+                    background-color: #dc2626;
+                }
+            """)
+            remove_btn.clicked.connect(lambda: self.remove_participant(widget))
+            layout.addWidget(remove_btn)
+        
+        # Добавляем в список
+        self.participant_widgets.append((line_edit, camera_btn, version_label))
+        
+        # Вставляем перед stretch
+        self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, widget)
+        
+        self.check_start_button()
+    
+    def remove_participant(self, widget):
+        """Удалить участника"""
+        # Находим индекс виджета
+        for i, (line_edit, camera_btn, version_label) in enumerate(self.participant_widgets):
+            if line_edit.parent() == widget:
+                # Удаляем из списка
+                self.participant_widgets.pop(i)
+                # Удаляем из словаря версий
+                name = line_edit.text().strip()
+                if name and name in self.photo_versions:
+                    del self.photo_versions[name]
+                break
+        
+        # Удаляем виджет
+        widget.deleteLater()
+        self.check_start_button()
+    
+    def take_photos(self, line_edit, version_label):
+        """Открыть диалог фотосъёмки для участника"""
+        name = line_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Предупреждение", "Сначала введите имя!")
+            return
+        
+        # Импортируем здесь, чтобы избежать циклических импортов
+        from ui.camera_dialog import CameraDialog
+        
+        dialog = CameraDialog(name, self, self.theme_name)
+        if dialog.exec() == QDialog.Accepted and hasattr(dialog, 'photos_taken') and len(dialog.photos_taken) == 10:
+            # Сохраняем фото
+            self.save_photos(name, dialog.photos_taken)
+            
+            # Увеличиваем версию
+            current_version = self.photo_versions.get(name, 0)
+            new_version = current_version + 1
+            self.photo_versions[name] = new_version
+            
+            # Обновляем метку
+            version_label.setText(str(new_version))
+            
+            # Меняем цвет кнопки камеры на зелёный
+            camera_btn = line_edit.parent().findChild(QPushButton, "cameraBtn")
+            if camera_btn:
+                camera_btn.setStyleSheet("""
+                    QPushButton#cameraBtn {
+                        background-color: #10b981;
+                        color: white;
+                        border: none;
+                        border-radius: 8px;
+                        font-size: 14pt;
+                    }
+                    QPushButton#cameraBtn:hover {
+                        background-color: #059669;
+                    }
+                """)
+            
+            # Отправляем сигнал
+            self.photo_taken.emit(name, new_version)
+            
+            QMessageBox.information(self, "Успех", f"Фото для {name} сохранены! Версия: {new_version}")
+    
+    def save_photos(self, name, photos):
+        """Сохранить фотографии"""
+        try:
+            # Создаём директорию для фото
+            photo_dir = "data/photos"
+            os.makedirs(photo_dir, exist_ok=True)
+            
+            # Получаем текущую версию
+            version = self.photo_versions.get(name, 0) + 1
+            
+            # Сохраняем фото
+            for i, photo in enumerate(photos):
+                filename = f"{photo_dir}/{name}_v{version}_{i}.png"
+                photo.save(filename)
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить фото: {e}")
+    
+    def check_start_button(self):
+        """Проверить, можно ли активировать кнопку старта"""
+        # Проверяем, что все поля заполнены
+        all_filled = True
+        for line_edit, _, _ in self.participant_widgets:
+            if not line_edit.text().strip():
+                all_filled = False
+                break
+        
+        # Активируем кнопку, если есть хотя бы один участник и все поля заполнены
+        self.start_btn.setEnabled(len(self.participant_widgets) > 0 and all_filled)
+    
+    def get_participants(self):
+        """Получить список участников"""
+        participants = []
+        for line_edit, _, version_label in self.participant_widgets:
+            name = line_edit.text().strip()
+            if name:
+                participants.append(name)
+        return participants
+    
+    def get_photo_versions(self):
+        """Получить словарь версий фото"""
+        return self.photo_versions.copy()
+
+
+# ============= СТАРЫЙ КОД =============
 from .mode_selector_dialog import ModeSelectorDialog

@@ -184,11 +184,13 @@ class GameServer(QObject):
             await self.unregister_player(player_id)
     
     async def send_to_player(self, player_id: str, message: dict):
+        """Отправить сообщение и дождаться подтверждения"""
         if player_id in self.players:
             try:
                 await self.players[player_id].websocket.send(
                     json.dumps(message, ensure_ascii=False)
                 )
+                self.log(f"📤 Отправлено {message.get('type', 'unknown')} игроку {player_id}")
             except (websockets.exceptions.ConnectionClosed, ConnectionError):
                 await self.unregister_player(player_id)
             except Exception as e:
@@ -365,3 +367,26 @@ class GameServer(QObject):
             self.server_task.cancel()
         
         self.log("Сервер остановлен")
+    
+    async def send_file_to_player(self, player_id, file_path, metadata):
+        """Отправить файл модели клиенту"""
+        if player_id in self.players:
+            try:
+                # Сначала отправляем метаданные
+                await self.send_to_player(player_id, metadata)
+            
+                # Отправляем файл частями
+                with open(file_path, 'rb') as f:
+                    chunk_size = 4096
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        # Здесь нужно реализовать протокол передачи файлов
+                        # Можно использовать отдельный тип сообщения "file_chunk"
+                        await self.send_to_player(player_id, {
+                            "type": "file_chunk",
+                            "data": chunk.hex()
+                        })
+            except Exception as e:
+                self.log(f"Ошибка отправки файла: {e}")

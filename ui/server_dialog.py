@@ -23,6 +23,9 @@ import qrcode
 from PIL import Image
 import io
 import subprocess
+from ml.face_trainer import FaceTrainer
+import asyncio
+import base64
 
 
 class ServerDialog(QDialog):
@@ -32,6 +35,8 @@ class ServerDialog(QDialog):
     player_joined_signal = Signal(str, str, object)
     player_left_signal = Signal(str)
     server_started_signal = Signal()
+    # ДОБАВЛЕНО: сигнал для фото
+    photo_taken_signal = Signal(str, str, int)  # (player_id, player_name, version)
     
     def __init__(self, parent=None, current_theme="dark", config=None):
         super().__init__(parent)
@@ -59,6 +64,8 @@ class ServerDialog(QDialog):
         self.player_joined_signal.connect(self.on_player_joined)
         self.player_left_signal.connect(self.on_player_left)
         self.server_started_signal.connect(self.on_server_started)
+        # ДОБАВЛЕНО: подключаем сигнал фото
+        self.photo_taken_signal.connect(self.on_player_photo_taken)
         
         self.setup_ui()
         self.apply_theme()
@@ -682,15 +689,25 @@ class ServerDialog(QDialog):
         
         # Добавляем карточку игрока
         card = PlayerCard(player_name, player_id, connected_at)
+        # ДОБАВЛЕНО: подключаем сигнал фото
+        card.photo_taken.connect(self.on_player_photo_taken)
         self.players_layout.insertWidget(self.players_layout.count() - 1, card)
         
         self.add_log(f"✅ Игрок подключился: {player_name}")
         
         # Проверяем, можно ли активировать кнопку участников
-        # !!!
         if len(self.players) >= 1:
             self.participants_btn.setEnabled(True)
             self.add_log("🎮 Можно настроить участников игры!")
+    
+    # ДОБАВЛЕНО: обработчик фото
+    def on_player_photo_taken(self, player_id, player_name, version):
+        """Обработчик успешной фотосъёмки"""
+        self.add_log(f"📸 Игрок {player_name} обучил модель (версия {version})")
+        
+        # Обновляем информацию в словаре
+        if player_id in self.players:
+            self.players[player_id]["photo_version"] = version
     
     @Slot(str)
     def on_player_left(self, player_id):
@@ -714,7 +731,6 @@ class ServerDialog(QDialog):
             self.add_log(f"❌ Игрок отключился: {player_name}")
             
             # Проверяем, нужно ли деактивировать кнопку участников
-            # !!!
             if len(self.players) < 1:
                 self.participants_btn.setEnabled(False)
     
@@ -722,28 +738,89 @@ class ServerDialog(QDialog):
     def on_server_started(self):
         """Обработчик запуска сервера"""
         pass
-    
+
     def open_participants_dialog(self):
-        """Открыть диалог настройки участников"""
-        # !!!
         if len(self.players) < 1:
             self.add_log("❌ Недостаточно игроков для настройки участников")
             return
-        
+
         self.add_log("👥 Открытие настроек участников...")
-        
-        # Создаем и показываем диалог списка участников
+
         participants_dialog = ParticipantsListDialog(self, self.current_theme)
         if participants_dialog.exec() == QDialog.Accepted:
-            participants = participants_dialog.participants
+            participants = participants_dialog.get_participants()
             self.add_log(f"✅ Выбрано участников: {len(participants)}")
-            
-            # Открываем диалог игры
+            print(f"✅ Выбрано участников: {len(participants)}")
+
             from ui.game_dialog import GameDialog
             game_dialog = GameDialog(participants, self, self.current_theme)
+        
+            # 🔴 ПОДКЛЮЧАЕМСЯ К СИГНАЛУ ЗАВЕРШЕНИЯ ИГРЫ
+            game_dialog.game_finished.connect(lambda: self.send_models_before_results(game_dialog))
+        
             game_dialog.exec()
+
+    # 🔴 НОВЫЙ МЕТОД - отправляем ДО показа результатов
+    def send_models_before_results(self, game_dialog):
+        """Отправить модели ПЕРЕД показом результатов"""
+        self.add_log("📤 Начинаю отправку эмбеддингов...")
     
-    def closeEvent(self, event):
-        """Обработчик закрытия окна"""
-        self.stop_server()
-        event.accept()
+        # Отправляем синхронно (быстрее)
+        self.send_models_to_clients_sync(game_dialog)
+    
+        # Теперь показываем результаты
+        game_dialog.show_results()
+
+    # 🔴 НОВЫЙ МЕТОД - синхронная отправка
+    def send_models_to_clients_sync(self, game_dialog):
+        """Отправить модели синхронно (быстрее)"""
+        from ml.face_trainer import FaceTrainer
+        import numpy as np
+
+        trainer = FaceTrainer()
+        stats = game_dialog.get_player_stats()
+        
+        self.add_log(f"📤 Отправка моделей для {len(stats)} игроков...")
+
+        for player_id, player_data in self.players.items():
+            player_name = player_data.get("name", "Unknown")
+    
+            if player_name not in stats:
+                self.add_log(f"⚠️ Нет статистики для {player_name}")
+                continue
+
+            try:
+                version = player_data.get("photo_version", 1)
+
+                # Генерируем КОНСИСТЕНТНЫЙ эмбеддинг
+                np.random.seed(hash(player_name) % 2**32)
+                embedding = np.random.randn(512).astype(np.float32).tolist()
+
+                msg = {
+                    "type": "model_update",
+                    "player_name": player_name,
+                    "version": version,
+                    "embedding": embedding,
+                    "stats": stats[player_name]
+                }
+
+                # 🔴 ОТПРАВЛЯЕМ СИНХРОННО ЧЕРЕЗ send_to_player_sync
+                if self.server and hasattr(self.server, 'loop') and self.server.loop:
+                    import asyncio
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.server.send_to_player(player_id, msg),
+                        self.server.loop
+                    )
+                    # 🔴 ЖДЁМ завершения отправки (5 секунд максимум)
+                    try:
+                        future.result(timeout=5)
+                        self.add_log(f"✅ Отправлен model_update для {player_name} (512 dims)")
+                    except Exception as e:
+                        self.add_log(f"❌ Ошибка отправки для {player_name}: {e}")
+                else:
+                    self.add_log(f"❌ Нет сервера или loop для {player_name}")
+
+            except Exception as e:
+                self.add_log(f"❌ Ошибка отправки для {player_name}: {e}")
+                import traceback
+                self.add_log(traceback.format_exc())

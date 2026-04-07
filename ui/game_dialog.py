@@ -23,6 +23,7 @@ logger.setLevel(logging.DEBUG)
 class GameDialog(QDialog):
     vote_received = Signal(str, int)
     self_score_confirmed = Signal(int)
+    game_finished = Signal()  # 🔴 НОВЫЙ СИГНАЛ
     
     def __init__(self, participants, parent=None, current_theme="dark"):
         super().__init__(parent)
@@ -424,6 +425,9 @@ class GameDialog(QDialog):
         )
 
     def show_results(self):
+        # 🔴 ОТПРАВЛЯЕМ СИГНАЛ ПЕРЕД ПОКАЗОМ РЕЗУЛЬТАТОВ
+        self.game_finished.emit()
+    
         results_dialog = ResultsDialog(self.participants, self.participant_data, self, self.current_theme)
         results_dialog.exec()
 
@@ -462,3 +466,62 @@ class GameDialog(QDialog):
         """)
         if msg.exec() == QMessageBox.Yes:
             self.reject()
+    
+    def get_player_stats(self):
+        """Получить статистику для всех игроков в формате для синхронизации"""
+        stats = {}
+        for participant in self.participants:
+            data = self.participant_data[participant]
+            stats[participant] = {
+                "Трудолюбие": [
+                    data["self_scores"][0], 
+                    sum(data["other_scores"][0])/len(data["other_scores"][0]) if data["other_scores"][0] else 0
+                ],
+                "Ответственность": [
+                    data["self_scores"][1], 
+                    sum(data["other_scores"][1])/len(data["other_scores"][1]) if data["other_scores"][1] else 0
+                ],
+                "Креативность": [
+                    data["self_scores"][2], 
+                    sum(data["other_scores"][2])/len(data["other_scores"][2]) if data["other_scores"][2] else 0
+                ],
+                "Командность": [
+                    data["self_scores"][3], 
+                    sum(data["other_scores"][3])/len(data["other_scores"][3]) if data["other_scores"][3] else 0
+                ],
+                "Стрессоустойчивость": [
+                    data["self_scores"][4], 
+                    sum(data["other_scores"][4])/len(data["other_scores"][4]) if data["other_scores"][4] else 0
+                ]
+            }
+        return stats
+        
+    # ДОБАВЛЕНО: метод для получения статистики
+    def get_player_stats(self):
+        """Получить статистику для всех игроков в формате для синхронизации"""
+        stats = {}
+        for participant in self.participants:
+            data = self.participant_data[participant]
+            stats[participant] = {
+                "Трудолюбие": [
+                    data["self_scores"][0], 
+                    sum(data["other_scores"][0])/len(data["other_scores"][0]) if data["other_scores"][0] else 0
+                ],
+                "Ответственность": [
+                    data["self_scores"][1], 
+                    sum(data["other_scores"][1])/len(data["other_scores"][1]) if data["other_scores"][1] else 0
+                ],
+                "Креативность": [
+                    data["self_scores"][2], 
+                    sum(data["other_scores"][2])/len(data["other_scores"][2]) if data["other_scores"][2] else 0
+                ],
+                "Командность": [
+                    data["self_scores"][3], 
+                    sum(data["other_scores"][3])/len(data["other_scores"][3]) if data["other_scores"][3] else 0
+                ],
+                "Стрессоустойчивость": [
+                    data["self_scores"][4], 
+                    sum(data["other_scores"][4])/len(data["other_scores"][4]) if data["other_scores"][4] else 0
+                ]
+            }
+        return stats

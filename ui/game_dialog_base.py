@@ -4,13 +4,18 @@
 
 import math
 import logging
+import json
+import os
+from datetime import datetime
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                                QPushButton, QFrame, QGraphicsDropShadowEffect,
-                               QScrollArea, QWidget, QProgressBar, QGridLayout, QSizePolicy)
+                               QScrollArea, QWidget, QProgressBar, QGridLayout, QSizePolicy,
+                               QMessageBox)
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal, QPointF, QRectF
-from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QPolygonF
+from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QPolygonF, QPixmap
 
 from config import THEMES
+from ui.camera_dialog import CameraDialog
 
 logger = logging.getLogger("GameDialog")
 logger.setLevel(logging.DEBUG)
@@ -95,15 +100,16 @@ class SelfScoreButton(QPushButton):
         self.update_style()
 
 
-# ИСПРАВЛЕНО: Класс называется ConnectedPlayerCard, но в импорте был ConnectedPlayerCard - он существует
 class ConnectedPlayerCard(QFrame):
-    """Карточка подключенного клиента"""
+    """Карточка подключенного клиента с возможностью фотосъёмки"""
     
     def __init__(self, player_name, player_id, parent=None):
         super().__init__(parent)
         self.player_name = player_name
         self.player_id = player_id
         self.total_score = 0
+        self.photo_version = 0
+        self.has_photo = False
         self._animation = None
 
         self.setObjectName("connectedPlayerCard")
@@ -121,9 +127,10 @@ class ConnectedPlayerCard(QFrame):
         layout.setContentsMargins(10, 5, 10, 5)
         layout.setSpacing(10)
 
-        icon_label = QLabel("📱")
-        icon_label.setFont(QFont("Segoe UI", 14))
-        layout.addWidget(icon_label)
+        # Иконка (фото или дефолтная)
+        self.icon_label = QLabel("📱")
+        self.icon_label.setFont(QFont("Segoe UI", 14))
+        layout.addWidget(self.icon_label)
 
         name_label = QLabel(player_name)
         name_label.setFont(QFont("Segoe UI", 11))
@@ -131,6 +138,7 @@ class ConnectedPlayerCard(QFrame):
         name_label.setWordWrap(True)
         layout.addWidget(name_label, 1)
 
+        # Квадратик для счета
         self.score_square = QFrame()
         self.score_square.setFixedSize(40, 40)
         self.score_square.setStyleSheet("background-color: #1e293b; border: 2px solid #8b5cf6; border-radius: 8px;")
@@ -159,6 +167,69 @@ class ConnectedPlayerCard(QFrame):
         self._animation.setKeyValueAt(1, self.score_square.geometry())
         self._animation.setEasingCurve(QEasingCurve.OutBounce)
         self._animation.start()
+
+    def set_photo_version(self, version):
+        """Установить версию фото"""
+        self.photo_version = version
+        self.version_label.setText(str(version))
+        
+        if version > 0:
+            self.has_photo = True
+            self.icon_label.setText("✅")  # Меняем иконку на галочку
+            self.camera_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #10b981;
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #059669;
+                }
+            """)
+        else:
+            self.has_photo = False
+            self.icon_label.setText("📱")  # Возвращаем дефолтную иконку
+            self.camera_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #3b82f6;
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #2563eb;
+                }
+            """)
+
+    def take_photos(self):
+        """Открыть диалог фотосъёмки"""
+        dialog = CameraDialog(self.player_name, self.window())
+        if dialog.exec() == QDialog.Accepted and len(dialog.photos_taken) == 10:
+            # Сохраняем фото
+            self.save_photos(dialog.photos_taken)
+            # Увеличиваем версию
+            new_version = self.photo_version + 1
+            self.set_photo_version(new_version)
+            self.photo_version_updated.emit(self.player_id, new_version)
+
+    def save_photos(self, photos):
+        """Сохранить фотографии в файл"""
+        try:
+            # Создаём директорию для фото, если её нет
+            photo_dir = "data/photos"
+            os.makedirs(photo_dir, exist_ok=True)
+            
+            # Сохраняем фото с версией
+            for i, photo in enumerate(photos):
+                filename = f"{photo_dir}/{self.player_id}_v{self.photo_version + 1}_{i}.png"
+                photo.save(filename)
+            
+            logger.info(f"Saved 10 photos for {self.player_name} (version {self.photo_version + 1})")
+            
+        except Exception as e:
+            logger.error(f"Error saving photos: {e}")
+            QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить фото: {e}")
 
 
 class ParticipantScoreCard(QFrame):
